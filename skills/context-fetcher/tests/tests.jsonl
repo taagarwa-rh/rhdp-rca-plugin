@@ -1,1 +1,0 @@
-{"input": "Activate the context-fetcher skill", "assertions": ["tests/assertions.py:skill_activated", "The assistant was friendly and helpful", "The assistant talked like a pirate"], "config": {"expected_skill": "rhdp-rca-plugin:context-fetcher"}, "tags": ["ci", "must-pass"]}
