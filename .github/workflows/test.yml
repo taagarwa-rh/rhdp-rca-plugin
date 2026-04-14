@@ -41,36 +41,63 @@ jobs:
           ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.ANTHROPIC_VERTEX_PROJECT_ID }}
           ANTHROPIC_MODEL: claude-sonnet-4-6@default
         run: |
-          SCORE=$(python tests/run_tests.py --tags ci -o test_results.json)
-          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+          pytest tests/ --junitxml=test_results.xml -v || true
 
-      - name: Extract cost
-        id: cost
+      - name: Parse test results
+        id: results
         run: |
-          COST=$(python -c "import json; print(json.load(open('test_results.json'))['costs']['costUSD'])")
-          echo "costUSD=$COST" >> "$GITHUB_OUTPUT"
+          python -c "
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse('test_results.xml')
+          root = tree.getroot()
+
+          testsuite = root if root.tag == 'testsuite' else root.find('testsuite')
+          total = int(testsuite.get('tests', 0))
+          failures = int(testsuite.get('failures', 0))
+          errors = int(testsuite.get('errors', 0))
+          passed = total - failures - errors
+
+          if total > 0:
+              pct = int((passed / total) * 100)
+              score = f'{pct}% ({passed}/{total})'
+          else:
+              score = '0% (0/0)'
+
+          total_cost = 0.0
+          for testcase in root.iter('testcase'):
+              for prop in testcase.iter('property'):
+                  if prop.get('name') == 'cost':
+                      total_cost += float(prop.get('value', 0))
+
+          failed_tests = []
+          for testcase in root.iter('testcase'):
+              failure = testcase.find('failure')
+              if failure is not None:
+                  name = testcase.get('name', '')
+                  classname = testcase.get('classname', '')
+                  message = failure.get('message', '').replace('|', '\\|')
+                  failed_tests.append((classname, name, message))
+
+          table = ''
+          if failed_tests:
+              lines = ['| Class | Test | Failure |', '|-------|------|---------|']
+              for cls, name, msg in failed_tests:
+                  lines.append(f'| {cls} | {name} | {msg} |')
+              table = '\n'.join(lines)
+
+          import os
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'score={score}\n')
+              f.write(f'costUSD={total_cost:.4f}\n')
+              f.write(f'table<<EOF\n{table}\nEOF\n')
+          "
 
       - name: Archive test results
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: test_results.json
-
-      - name: Extract failures table
-        id: failures
-        run: |
-          TABLE=$(python -c "
-          import json
-          failures = json.load(open('test_results.json')).get('failures', [])
-          if failures:
-              lines = ['| Input | Assertion | Result | Reasoning |', '|-------|-----------|--------|-----------|']
-              for f in failures:
-                  lines.append(f'| {f[\"input\"]} | {f[\"assertion\"]} | {f[\"result\"]} | {f[\"reasoning\"]} |')
-              print('\n'.join(lines))
-          ")
-          echo "table<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$TABLE" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          path: test_results.xml
 
       - name: Job summary
         run: |
@@ -78,13 +105,13 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Metric | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Score | ${{ steps.test.outputs.score }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Cost | \$${{ steps.cost.outputs.costUSD }} |" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "${{ steps.failures.outputs.table }}" ]; then
+          echo "| Score | ${{ steps.results.outputs.score }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cost | \$${{ steps.results.outputs.costUSD }} |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.results.outputs.table }}" ]; then
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "### Failures" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "${{ steps.failures.outputs.table }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "${{ steps.results.outputs.table }}" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Comment on PR
@@ -92,9 +119,9 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const failuresTable = `${{ steps.failures.outputs.table }}`;
+            const failuresTable = `${{ steps.results.outputs.table }}`;
             const failuresSection = failuresTable ? `\n\n### Failures\n\n${failuresTable}` : '';
-            const body = `## Skill Test Results\n\n| Metric | Value |\n|--------|-------|\n| Score | ${{ steps.test.outputs.score }} |\n| Cost | \$${{ steps.cost.outputs.costUSD }} |${failuresSection}\n\n*Results from commit ${{ github.sha }}*`;
+            const body = `## Skill Test Results\n\n| Metric | Value |\n|--------|-------|\n| Score | ${{ steps.results.outputs.score }} |\n| Cost | \$${{ steps.results.outputs.costUSD }} |${failuresSection}\n\n*Results from commit ${{ github.sha }}*`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -119,9 +146,9 @@ jobs:
 
       - name: Check score
         run: |
-          echo "Test score: ${{ steps.test.outputs.score }}"
-          if [ "$(echo '${{ steps.test.outputs.score }} < 1.00' | bc -l)" -eq 1 ]; then
-            echo "::error::Test score ${{ steps.test.outputs.score }} is below 1.00"
+          echo "Test score: ${{ steps.results.outputs.score }}"
+          if [[ "${{ steps.results.outputs.score }}" != 100%* ]]; then
+            echo "::error::Test score ${{ steps.results.outputs.score }} is below 100%"
             exit 1
           fi
 
