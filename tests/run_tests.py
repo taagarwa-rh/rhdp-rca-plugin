@@ -6,6 +6,7 @@ import importlib
 import inspect
 from pydantic import BaseModel
 import warnings
+import json
 
 from claude_agent_sdk import (
     query, 
@@ -61,13 +62,14 @@ class TestReport(BaseModel):
     
     def to_json_report(self) -> str:
         """Convert to a JSON report."""
-        exclude = {
-            "results": {
-                "__all__": {"messages"}, 
-                "assertion_results": {"__all__": {"messages"}},
-            },
-        }
-        return self.model_dump_json(exclude=exclude, indent=2)
+        report = self.model_dump()
+        failures = [
+            {"input": result.input, "assertion": assertion.assertion, "result": assertion.output.result, "reasoning": assertion.output.reasoning}
+            for result in self.results for assertion in result.assertion_results 
+            if assertion.output.result == "fail"
+        ]
+        report["failures"] = failures
+        return json.dumps(report, indent=2)
 
 
 def format_conversation(messages: list[Message]) -> str:
