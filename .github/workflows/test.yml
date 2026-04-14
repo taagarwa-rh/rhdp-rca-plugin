@@ -1,8 +1,6 @@
 name: test
 
 on:
-  push:
-    branches: [feat/ci-testing]
   pull_request:
     branches: [stage, feat/ci-testing]
     
@@ -41,7 +39,7 @@ jobs:
           CLAUDE_CODE_USE_VERTEX: 1
           CLOUD_ML_REGION: us-east5
           ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.ANTHROPIC_VERTEX_PROJECT_ID }}
-          ANTHROPIC_MODEL: claude-opus-4-6@default
+          ANTHROPIC_MODEL: claude-sonnet-4-6@default
         run: |
           SCORE=$(python tests/run_tests.py --tags ci -o test_results.json)
           echo "score=$SCORE" >> "$GITHUB_OUTPUT"
@@ -58,6 +56,22 @@ jobs:
           name: test-results
           path: test_results.json
 
+      - name: Extract failures table
+        id: failures
+        run: |
+          TABLE=$(python -c "
+          import json
+          failures = json.load(open('test_results.json')).get('failures', [])
+          if failures:
+              lines = ['| Input | Assertion | Result | Reasoning |', '|-------|-----------|--------|-----------|']
+              for f in failures:
+                  lines.append(f'| {f[\"input\"]} | {f[\"assertion\"]} | {f[\"result\"]} | {f[\"reasoning\"]} |')
+              print('\n'.join(lines))
+          ")
+          echo "table<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$TABLE" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Job summary
         run: |
           echo "## Skill Test Results" >> "$GITHUB_STEP_SUMMARY"
@@ -66,13 +80,21 @@ jobs:
           echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Score | ${{ steps.test.outputs.score }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Cost | \$${{ steps.cost.outputs.costUSD }} |" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${{ steps.failures.outputs.table }}" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Failures" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "${{ steps.failures.outputs.table }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Comment on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `## Skill Test Results\n\n| Metric | Value |\n|--------|-------|\n| Score | ${{ steps.test.outputs.score }} |\n| Cost | \$${{ steps.cost.outputs.costUSD }} |\n\n*Results from commit ${{ github.sha }}*`;
+            const failuresTable = `${{ steps.failures.outputs.table }}`;
+            const failuresSection = failuresTable ? `\n\n### Failures\n\n${failuresTable}` : '';
+            const body = `## Skill Test Results\n\n| Metric | Value |\n|--------|-------|\n| Score | ${{ steps.test.outputs.score }} |\n| Cost | \$${{ steps.cost.outputs.costUSD }} |${failuresSection}\n\n*Results from commit ${{ github.sha }}*`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
