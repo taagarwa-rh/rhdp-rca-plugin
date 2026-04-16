@@ -39,7 +39,8 @@ jobs:
           CLAUDE_CODE_USE_VERTEX: 1
           CLOUD_ML_REGION: us-east5
           ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.ANTHROPIC_VERTEX_PROJECT_ID }}
-          ANTHROPIC_MODEL: claude-sonnet-4-6@default
+          ANTHROPIC_MODEL: claude-opus-4-6@default
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pytest tests/ --junitxml=test_results.xml -v || true
 

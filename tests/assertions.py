@@ -19,6 +19,17 @@ def assert_skill_activated(messages: list[Message], expected_skill: str):
         assert False, f"Skill {expected_skill} was not activated."
 
 
+async def assert_tool_called(messages: list[Message], expected_tool: str):
+    """Check if a tool was called."""
+    assistant_messages = [message for message in messages if isinstance(message, AssistantMessage)]
+    tool_use_blocks = [block for message in assistant_messages for block in message.content if isinstance(block, ToolUseBlock)]
+    expected_tool_use_blocks = [block for block in tool_use_blocks if block.name == expected_tool]
+    if len(expected_tool_use_blocks) > 0:
+        assert True
+    else:
+        assert False, f"Tool {expected_tool} was not used."
+
+
 class AssertionOutput(BaseModel):
     
     result: str
