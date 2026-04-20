@@ -3,7 +3,7 @@ import pytest
 from tests.assertions import assert_skill_activated, assert_passes
 from tests.harness import run_query    
     
-class TestContextFetcher:
+class TestActivateContextFetcherSkill:
 
     @pytest.fixture
     def agent_input(self):
@@ -19,3 +19,9 @@ class TestContextFetcher:
         assertion = "The assistant was friendly and helpful"
         messages = pytest.messages
         await assert_passes(input=agent_input, messages=messages, assertion=assertion)    
+
+    @pytest.mark.dependency("test_skill_activation")
+    async def test_pirate(self, agent_input):
+        assertion = "The assistant talked like a pirate"
+        messages = pytest.messages
+        await assert_passes(input=agent_input, messages=messages, assertion=assertion)
